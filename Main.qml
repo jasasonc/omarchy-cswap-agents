@@ -282,7 +282,12 @@ Item {
       var syncedDisplay = displayProvider({ id: syncedId, name: stats.providerName || syncedId })
       if (providerHasData(syncedDisplay)) result.push(syncedDisplay)
     }
+    // claude-swap tabs keep the account order, so key 1 is always account 1,
+    // whichever account is active. Other tabs follow in their usual order.
     return result
+      .map(function(p, i) { return { p: p, key: Number(p.cswapNumber) > 0 ? Number(p.cswapNumber) : 1000 + i } })
+      .sort(function(a, b) { return a.key - b.key })
+      .map(function(entry) { return entry.p })
   }
 
   function providerEnabled(id) {

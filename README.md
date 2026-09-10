@@ -4,7 +4,8 @@ An Omarchy bar plugin for people with more than one Claude account in [claude-sw
 
 The plugin is a copy of the Omarchy Agents panel (`omarchy.agents`) with these changes:
 
-- Each claude-swap account has its own tab. The tab name is the alias from `cswap alias`. If an account has no alias, the tab name is the first part of the email address.
+- Each claude-swap account has its own tab. The tab name is the alias from `cswap alias`. If an account has no alias, the tab name is the part of the email address before the @. If two accounts have the same part before the @, the tabs show the full email addresses.
+- The Claude tabs stay in the claude-swap account order. Key `1` always shows account 1, also after a switch.
 - The active account shows `active` next to its plan.
 - An inactive account has a switch command. The switch needs a second key press or click, so a look at the usage never switches the account.
 

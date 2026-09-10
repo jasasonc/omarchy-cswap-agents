@@ -88,11 +88,35 @@ def age_text(seconds) -> str:
   return f"{hours} h ago" if hours < 48 else f"{hours // 24} days ago"
 
 
-def slug_for(account: dict) -> str:
-  # Prefer the alias set with `cswap alias`, then the email name.
-  name = str(account.get("alias") or "") or str(account.get("email") or "").split("@")[0]
-  slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-  return slug or f"account-{account.get('number')}"
+def slugify(text: str) -> str:
+  return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
+def names_for(accounts: list[dict]) -> list[str]:
+  """One unique tab name per account, in account order.
+
+  The name is the alias set with `cswap alias`, else the email name before
+  the @. Accounts without an alias whose email names clash use the full
+  email. A name that is still not unique gets the account number.
+  """
+  def short(account: dict) -> str:
+    return slugify(str(account.get("alias") or "") or str(account.get("email") or "").split("@")[0])
+
+  short_names = [short(a) for a in accounts]
+  names = []
+  for account, name in zip(accounts, short_names):
+    if short_names.count(name) > 1 and not account.get("alias"):
+      name = slugify(str(account.get("email") or "")) or name
+    names.append(name)
+
+  unique = []
+  for account, name in zip(accounts, names):
+    if not name:
+      name = f"account-{account.get('number')}"
+    elif names.count(name) > 1:
+      name = f"{name}-{account.get('number')}"
+    unique.append(name)
+  return unique
 
 
 def record_for(account: dict, slug: str) -> dict:
@@ -180,24 +204,24 @@ def main() -> int:
   def is_active(account: dict) -> bool:
     return bool(account.get("active")) or (active_number is not None and account.get("number") == active_number)
 
-  # The panel names the built-in Claude Code tab after this account.
-  active = next((a for a in accounts if is_active(a)), None)
+  names = names_for(accounts)
+
+  # The panel names the built-in Claude Code tab after the active account.
   active_path = STATE_HOME / "cswap-omarchy" / "active.json"
-  if active:
+  active_index = next((i for i, a in enumerate(accounts) if is_active(a)), None)
+  if active_index is not None:
+    active = accounts[active_index]
     active_path.parent.mkdir(parents=True, exist_ok=True)
-    write_if_changed(active_path, {"number": active.get("number"), "name": slug_for(active), "email": active.get("email") or ""})
+    write_if_changed(active_path, {"number": active.get("number"), "name": names[active_index], "email": active.get("email") or ""})
   else:
     active_path.unlink(missing_ok=True)
 
   written = set()
-  for account in accounts:
+  for account, name in zip(accounts, names):
     if is_active(account):
       continue
-    slug = slug_for(account)
-    if PREFIX + slug + ".json" in written:
-      slug = f"{slug}-{account.get('number')}"
-    path = USAGE_DIR / f"{PREFIX}{slug}.json"
-    write_if_changed(path, record_for(account, slug))
+    path = USAGE_DIR / f"{PREFIX}{name}.json"
+    write_if_changed(path, record_for(account, name))
     written.add(path.name)
 
   # Remove tabs for accounts that became active or left cswap.
