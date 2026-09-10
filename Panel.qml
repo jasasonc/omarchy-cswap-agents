@@ -563,6 +563,20 @@ Panel {
             foreground: root.foreground
             fontFamily: root.fontFamily
 
+            // Add account sits at the top of the active account's tab, apart
+            // from the limits and charts. `a` works on every Claude tab.
+            trailingControl: Component {
+              KeyButton {
+                visible: root.showAddAccountButton(root.provider)
+                width: implicitWidth
+                label: "+ Add"
+                keys: "a"
+                tooltipText: "Add a claude-swap account"
+                enabled: !root.switchRunning
+                onClicked: root.addAccount()
+              }
+            }
+
             iconComponent: Component {
               Item {
                 id: heroMark
@@ -823,44 +837,25 @@ Panel {
             }
           }
 
-          // ---------- claude-swap: switch and add accounts ----------
+          // ---------- claude-swap: switch account ----------
           PanelSeparator {
-            visible: accountActions.visible
+            visible: switchButton.visible
             foreground: root.foreground
           }
 
           // One click switches; from the keyboard it takes `s` then `s`.
-          // Add account shows on the active account's tab; `a` works on every
-          // Claude tab. A 1 px inset keeps the side borders inside the clip.
-          Column {
-            id: accountActions
-            // Not switchButton.visible: a child of a hidden item always reads as hidden.
-            visible: root.canSwitch(root.provider) || root.showAddAccountButton(root.provider)
+          // A 1 px inset keeps the side borders inside the clip.
+          KeyButton {
+            id: switchButton
+            visible: root.canSwitch(root.provider)
             x: 1
             width: parent.width - 2
-            spacing: Style.spacing.md
-
-            KeyButton {
-              id: switchButton
-              visible: root.canSwitch(root.provider)
-              width: parent.width
-              label: root.switchLabel()
-              keys: root.switchRunning ? "" : (root.switchArmed ? "s" : "s s")
-              selected: root.switchArmed
-              emphasized: root.switchArmed
-              enabled: !root.switchRunning
-              onClicked: root.startSwitch()
-            }
-
-            KeyButton {
-              id: addAccountButton
-              visible: root.showAddAccountButton(root.provider)
-              width: parent.width
-              label: "Add account"
-              keys: "a"
-              enabled: !root.switchRunning
-              onClicked: root.addAccount()
-            }
+            label: root.switchLabel()
+            keys: root.switchRunning ? "" : (root.switchArmed ? "s" : "s s")
+            selected: root.switchArmed
+            emphasized: root.switchArmed
+            enabled: !root.switchRunning
+            onClicked: root.startSwitch()
           }
 
           // ---------- Usage ----------

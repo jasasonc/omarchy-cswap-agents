@@ -4,7 +4,7 @@ An Omarchy bar plugin for people with more than one Claude account in [claude-sw
 
 This plugin is not part of claude-swap. It only uses the `cswap` command.
 
-![The panel with two claude-swap accounts: the active work account with the Add account button, and the personal account with its switch button. Both tabs show the token charts for all accounts.](preview.png)
+![The panel with two claude-swap accounts: the active work account with the Add button, and the personal account with its switch button. Both tabs show the token charts for all accounts.](preview.png)
 
 The plugin is a copy of the Omarchy Agents panel (`omarchy.agents`) with these changes:
 
@@ -12,7 +12,7 @@ The plugin is a copy of the Omarchy Agents panel (`omarchy.agents`) with these c
 - The Claude tabs stay in the claude-swap account order. Key `1` always shows account 1, also after a switch.
 - The active account shows `active` next to its plan.
 - An inactive account has a switch button. From the keyboard, a switch needs two key presses, so a look at the usage never switches the account.
-- The Add account button opens a terminal that adds an account to claude-swap.
+- The Add button at the top of the active account's tab opens a terminal that adds an account to claude-swap.
 - If claude-swap is not installed, the Claude tab shows the install command.
 - The bar icon warns about the limits of the active Claude account, also when the panel was last open on the tab of another account.
 - The token charts show on each Claude tab, with the label `ALL ACCOUNTS`. Claude Code does not record the account in its session files, so the charts show the tokens of all accounts together.
@@ -41,7 +41,7 @@ The plugin takes the place of the Agents panel (`omarchy.agents`) in the bar. Do
 
 ## Add accounts
 
-Open the panel on the tab of the active account. Click Add account, or push `a`. A terminal opens and does these steps:
+Open the panel on the tab of the active account. Click `+ Add` at the top right, or push `a`. A terminal opens and does these steps:
 
 1. claude-swap saves the account that Claude Code uses now.
 2. You log in with the account to add. The login opens in the browser.
