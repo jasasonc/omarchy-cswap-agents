@@ -66,9 +66,8 @@ Panel {
 
   // ------------------------------------------------------- claude-swap switch
   //
-  // Switching needs two presses of `s` (or two clicks on its own button, away
-  // from the tabs) within 3 seconds, so reading another account never
-  // switches by accident.
+  // Switching needs two presses of `s` within 3 seconds, so reading another
+  // account never switches by accident. There is no mouse path.
 
   property bool switchArmed: false
   property bool switchRunning: false
@@ -81,7 +80,7 @@ Panel {
     var name = root.provider ? String(root.provider.providerName || "") : ""
     if (root.switchRunning) return "Switching…"
     if (root.switchArmed) return "Press s again to switch to " + name
-    return "Switch Claude Code to " + name + "   s s"
+    return "Press s s to switch Claude Code to " + name
   }
 
   function pressSwitch() {
@@ -707,35 +706,19 @@ Panel {
             foreground: root.foreground
           }
 
-          Column {
+          // A key hint, not a button: only `s` then `s` switches.
+          Text {
             id: switchSection
             visible: root.canSwitch(root.provider)
+            textFormat: Text.PlainText
             width: parent.width
-            spacing: Style.spacing.md
-
-            Button {
-              width: parent.width
-              text: root.switchLabel()
-              selected: root.switchArmed
-              bordered: true
-              enabled: !root.switchRunning
-              opacity: enabled ? 1 : 0.6
-              foreground: root.switchArmed ? root.urgent : root.foreground
-              fontFamily: root.fontFamily
-              fontSize: Style.font.bodySmall
-              verticalPadding: Style.spacing.controlPaddingY
-              onClicked: root.pressSwitch()
-            }
-
-            Text {
-              textFormat: Text.PlainText
-              width: parent.width
-              text: "Press s two times or click two times. Open Claude Code sessions use the new account from their next message."
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
-            }
+            text: root.switchLabel()
+            color: root.switchArmed ? root.urgent : root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            font.bold: root.switchArmed
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
           }
 
           // ---------- Usage ----------
