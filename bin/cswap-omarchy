@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+"""Show claude-swap (cswap) account usage in the Omarchy Agents panel.
+
+Reads `cswap list --json` and writes one record per inactive account to
+~/.local/state/omarchy/agents/usage/cswap-<name>.json. The panel shows every
+record in that folder as a tab. The active account is left to Omarchy's
+built-in Claude Code tab, so it does not show twice.
+"""
+
+import datetime as dt
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+PREFIX = "cswap-"
+STATE_HOME = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
+USAGE_DIR = STATE_HOME / "omarchy" / "agents" / "usage"
+
+
+def log(message: str) -> None:
+  print(f"cswap-omarchy: {message}", file=sys.stderr)
+
+
+def cswap_binary() -> str | None:
+  # systemd user services often run without ~/.local/bin on PATH.
+  found = shutil.which("cswap")
+  if found:
+    return found
+  fallback = Path.home() / ".local/bin/cswap"
+  return str(fallback) if fallback.is_file() else None
+
+
+def parse_time(value) -> dt.datetime | None:
+  if not value:
+    return None
+  try:
+    parsed = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+  except ValueError:
+    return None
+  return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.timezone.utc)
+
+
+def limit_window(label: str, entry, title: str = "") -> dict | None:
+  if not isinstance(entry, dict) or entry.get("pct") is None:
+    return None
+  try:
+    percent = float(entry["pct"]) / 100
+  except (TypeError, ValueError):
+    return None
+  reset = parse_time(entry.get("resetsAt"))
+  # A window that reset after the numbers were read no longer holds them.
+  if reset and reset <= dt.datetime.now(dt.timezone.utc):
+    return None
+  window = {"label": label, "percent": max(0.0, min(1.0, percent))}
+  if reset:
+    window["resetsAt"] = reset.isoformat()
+  if title:
+    window["title"] = title
+  return window
+
+
+def limits_from(usage) -> list[dict]:
+  if not isinstance(usage, dict):
+    return []
+  windows = [
+    limit_window("Session (5-hour)", usage.get("fiveHour")),
+    limit_window("Weekly (7-day)", usage.get("sevenDay")),
+  ]
+  for scoped in usage.get("scoped") or []:
+    name = str((scoped or {}).get("name") or "").strip()
+    if name:
+      windows.append(limit_window(f"{name} Weekly", scoped, f"{name} Weekly"))
+  return [w for w in windows if w]
+
+
+def age_text(seconds) -> str:
+  minutes = int((seconds or 0) // 60)
+  if minutes < 1:
+    return "just now"
+  if minutes < 60:
+    return f"{minutes} min ago"
+  hours = minutes // 60
+  return f"{hours} h ago" if hours < 48 else f"{hours // 24} days ago"
+
+
+def slug_for(account: dict) -> str:
+  # Prefer the alias set with `cswap alias`, then the email name.
+  name = str(account.get("alias") or "") or str(account.get("email") or "").split("@")[0]
+  slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+  return slug or f"account-{account.get('number')}"
+
+
+def record_for(account: dict, slug: str) -> dict:
+  email = str(account.get("email") or "")
+  status = str(account.get("usageStatus") or "")
+  usage = account.get("usage")
+  status_text = ""
+  help_text = ""
+
+  if isinstance(usage, dict):
+    limits = limits_from(usage)
+    age = account.get("usageAgeSeconds") or 0
+    if age > 600:
+      status_text = f"Updated {age_text(age)}"
+  else:
+    limits = limits_from(account.get("lastGoodUsage"))
+    last_known = f", last known {age_text(account.get('lastGoodAgeSeconds'))}" if limits else ""
+    if status in ("token_expired", "relogin_required"):
+      status_text = "Sign-in expired" + last_known
+      help_text = f"Log in to Claude Code as {email}, then run: cswap add"
+    else:
+      status_text = "Usage unavailable" + last_known
+      error = account.get("usageError")
+      help_text = f"cswap could not read the usage ({error})." if error else "cswap could not read the usage."
+
+  # The panel hides a tab with no limits at all. A negative percent keeps the
+  # tab, so an error stays visible, and the panel draws no meter for it.
+  if not limits:
+    limits = [{"label": "Weekly (7-day)", "percent": -1}]
+
+  tier = email + (" (disabled in cswap)" if account.get("disabled") else "")
+  return {
+    "schemaVersion": 1,
+    "id": PREFIX + slug,
+    "name": slug,
+    "cswapNumber": account.get("number"),
+    "cswapEmail": email,
+    "updatedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
+    "ready": True,
+    "hasLocalStats": False,
+    "hasPromptStats": False,
+    "tierLabel": tier,
+    "usageStatusText": status_text,
+    "authHelpText": help_text,
+    "limits": limits,
+  }
+
+
+def write_if_changed(path: Path, record: dict) -> None:
+  def same(a: dict, b: dict) -> bool:
+    return {k: v for k, v in a.items() if k != "updatedAt"} == {k: v for k, v in b.items() if k != "updatedAt"}
+
+  try:
+    if same(json.loads(path.read_text(encoding="utf-8")), record):
+      return
+  except (OSError, ValueError):
+    pass
+  # The temp name does not end in .json, so the panel never reads a half-written file.
+  fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.stem}.")
+  with os.fdopen(fd, "w", encoding="utf-8") as handle:
+    json.dump(record, handle, separators=(",", ":"), sort_keys=True)
+    handle.write("\n")
+  os.replace(tmp, path)
+
+
+def main() -> int:
+  cswap = cswap_binary()
+  if not cswap:
+    log("cswap not found. Install it with: uv tool install claude-swap")
+    return 1
+  try:
+    result = subprocess.run([cswap, "list", "--json"], capture_output=True, text=True, timeout=120, check=True)
+    data = json.loads(result.stdout)
+  except subprocess.CalledProcessError as exc:
+    log(f"cswap list failed: {exc.stderr.strip() or exc}")
+    return 1
+  except (subprocess.TimeoutExpired, ValueError) as exc:
+    log(f"cswap list failed: {exc}")
+    return 1
+
+  accounts = data.get("accounts") or []
+  active_number = data.get("activeAccountNumber")
+  USAGE_DIR.mkdir(parents=True, exist_ok=True)
+
+  def is_active(account: dict) -> bool:
+    return bool(account.get("active")) or (active_number is not None and account.get("number") == active_number)
+
+  # The panel names the built-in Claude Code tab after this account.
+  active = next((a for a in accounts if is_active(a)), None)
+  active_path = STATE_HOME / "cswap-omarchy" / "active.json"
+  if active:
+    active_path.parent.mkdir(parents=True, exist_ok=True)
+    write_if_changed(active_path, {"number": active.get("number"), "name": slug_for(active), "email": active.get("email") or ""})
+  else:
+    active_path.unlink(missing_ok=True)
+
+  written = set()
+  for account in accounts:
+    if is_active(account):
+      continue
+    slug = slug_for(account)
+    if PREFIX + slug + ".json" in written:
+      slug = f"{slug}-{account.get('number')}"
+    path = USAGE_DIR / f"{PREFIX}{slug}.json"
+    write_if_changed(path, record_for(account, slug))
+    written.add(path.name)
+
+  # Remove tabs for accounts that became active or left cswap.
+  for path in USAGE_DIR.glob(PREFIX + "*.json"):
+    if path.name not in written:
+      path.unlink(missing_ok=True)
+  return 0
+
+
+if __name__ == "__main__":
+  raise SystemExit(main())
