@@ -37,14 +37,27 @@ Panel {
   property double nowMs: Date.now()
 
   readonly property var limits: limitWindows(provider)
-  readonly property var models: modelRows(provider)
-  readonly property var headline: bindingWindow(provider)
+  readonly property var models: modelRows(claudeProvider)
   readonly property var balance: provider ? (provider.balance || null) : null
   // A prepaid account runs low the way a subscription window fills up: the
   // last 10% of the funded credits lights the same alarm.
   readonly property bool balanceAlarming: !!balance && balance.funded > 0
     && balance.remaining / balance.funded <= 0.1
-  readonly property bool alarming: (!!headline && headline.percent >= 0.9) || balanceAlarming
+  // On the tab of an inactive claude-swap account, the Claude Code record of
+  // the active account stands in for two things. The bar icon warns about the
+  // account Claude Code uses now. The token charts come from the local session
+  // files, which do not record the account, so every Claude tab shows the same
+  // totals for all accounts.
+  readonly property var claudeProvider: {
+    if (provider && String(provider.providerId).indexOf("cswap-") === 0) {
+      for (var i = 0; i < providers.length; i++)
+        if (providers[i].providerId === "claude") return providers[i]
+    }
+    return provider
+  }
+  readonly property bool allAccountsStats: isClaudeTab(provider) && Number(usage.cswapStatus.accounts || 0) > 1
+  readonly property var alarmHeadline: bindingWindow(claudeProvider)
+  readonly property bool alarming: (!!alarmHeadline && alarmHeadline.percent >= 0.9) || balanceAlarming
 
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)) }
   function alpha(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
@@ -100,13 +113,15 @@ Panel {
     root.switchArmed = false
     root.switchRunning = true
     switchProcess.command = ["bash", "-c", root.switchScript, "cswap-switch",
-                             String(Number(p.cswapNumber)), String(p.providerName || "")]
+                             String(Number(p.cswapNumber)), String(p.providerName || ""), usage.cswapPath]
     switchProcess.running = true
   }
 
-  // $1 = cswap account number, $2 = account name for the notification.
+  // $1 = cswap account number, $2 = account name for the notification,
+  // $3 = the cswap binary that cswap-omarchy found.
   readonly property string switchScript: [
-    'cswap=$(command -v cswap || echo "$HOME/.local/bin/cswap")',
+    'cswap=$3',
+    '[ -x "$cswap" ] || cswap=$(command -v cswap)',
     'out=$("$cswap" switch "$1" 2>&1)',
     'status=$?',
     'if [ $status -eq 0 ]; then',
@@ -138,6 +153,49 @@ Panel {
       waitForEnd: true
       onStreamFinished: if (text.trim() !== "") console.warn("agents", "cswap switch:", text.trim())
     }
+  }
+
+  // ------------------------------------------------------- claude-swap setup
+  //
+  // Adding an account needs a browser login, so it runs in a terminal. The
+  // script updates the account tabs itself when it ends.
+
+  readonly property string addAccountScript: decodeURIComponent(String(Qt.resolvedUrl("bin/cswap-add-account")).replace(/^file:\/\//, ""))
+  readonly property string installCommand: "uv tool install claude-swap"
+  property bool installCommandCopied: false
+
+  function isClaudeTab(p) {
+    return !!p && (p.providerId === "claude" || String(p.providerId).indexOf("cswap-") === 0)
+  }
+
+  function canAddAccount(p) {
+    return isClaudeTab(p) && usage.cswapState !== "missing" && usage.cswapPath !== ""
+  }
+
+  // The button shows on the active account's tab only; `a` works on every Claude tab.
+  function showAddAccountButton(p) {
+    return canAddAccount(p) && p.providerId === "claude"
+  }
+
+  function setupNeeded(p) {
+    return isClaudeTab(p) && (usage.cswapState === "missing" || usage.cswapState === "no-accounts")
+  }
+
+  function addAccount() {
+    if (!canAddAccount(root.provider)) return
+    root.close()
+    Quickshell.execDetached(["omarchy", "launch", "terminal", "bash", root.addAccountScript, usage.cswapPath, usage.cswapBridge])
+  }
+
+  function copyInstallCommand() {
+    Quickshell.execDetached(["wl-copy", root.installCommand])
+    root.installCommandCopied = true
+  }
+
+  Timer {
+    interval: 2000
+    running: root.installCommandCopied
+    onTriggered: root.installCommandCopied = false
   }
 
   // ---------------------------------------------------------------- limits
@@ -293,9 +351,10 @@ Panel {
     // Prompt and session counts only exist for today, so they ride along here
     // instead of taking a section of their own. Billing-API agents never
     // count prompts, and "0 prompts" would read as a quiet day, not a gap.
-    if (today && provider && provider.hasPromptStats !== false)
-      text += " · " + Number(provider.todayPrompts || 0) + " prompts · "
-        + Number(provider.todaySessions || 0) + " sessions"
+    var stats = claudeProvider
+    if (today && stats && stats.hasPromptStats !== false)
+      text += " · " + Number(stats.todayPrompts || 0) + " prompts · "
+        + Number(stats.todaySessions || 0) + " sessions"
     return text
   }
 
@@ -465,6 +524,10 @@ Panel {
           root.refreshNow()
         } else if (t === "s" || t === "S") {
           root.pressSwitch()
+        } else if (t === "a" || t === "A") {
+          root.addAccount()
+        } else if ((t === "c" || t === "C") && usage.cswapState === "missing" && root.isClaudeTab(root.provider)) {
+          root.copyInstallCommand()
         } else if (t >= "1" && t <= "9") {
           var index = Number(t) - 1
           if (index < root.providers.length) {
@@ -617,6 +680,57 @@ Panel {
             }
           }
 
+          // ---------- claude-swap: setup help ----------
+          BorderSurface {
+            visible: root.setupNeeded(root.provider)
+            width: parent.width
+            implicitHeight: setupColumn.implicitHeight + Style.spacing.xl * 2
+            color: root.alpha(root.foreground, 0.05)
+            borderSpec: Border.flat(root.alpha(root.foreground, 0.25), 1)
+            radius: Style.cornerRadius
+
+            Column {
+              id: setupColumn
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              anchors.leftMargin: Style.space(12)
+              anchors.rightMargin: Style.space(12)
+              spacing: Style.space(10)
+
+              Text {
+                textFormat: Text.PlainText
+                width: parent.width
+                text: usage.cswapState === "missing"
+                  ? "Install claude-swap to see the usage of all your Claude accounts and to switch between them. Run this command in a terminal:"
+                  : "claude-swap has no accounts. Add the account that Claude Code uses now, then your other accounts."
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+              }
+
+              Flow {
+                visible: usage.cswapState === "missing"
+                width: parent.width
+                spacing: Style.spacing.md
+
+                KeyCap {
+                  height: copyButton.height
+                  keys: root.installCommand
+                }
+
+                KeyButton {
+                  id: copyButton
+                  width: implicitWidth
+                  label: root.installCommandCopied ? "Copied" : "Copy"
+                  keys: "c"
+                  onClicked: root.copyInstallCommand()
+                }
+              }
+            }
+          }
+
           // ---------- Balance / limits ----------
           PanelSeparator {
             visible: balanceSection.visible || limitsSection.visible
@@ -709,72 +823,43 @@ Panel {
             }
           }
 
-          // ---------- claude-swap: switch account ----------
+          // ---------- claude-swap: switch and add accounts ----------
           PanelSeparator {
-            visible: switchSection.visible
+            visible: accountActions.visible
             foreground: root.foreground
           }
 
           // One click switches; from the keyboard it takes `s` then `s`.
-          // A 1 px inset keeps the button's side borders inside the clip.
-          Item {
-            id: switchSection
-            visible: root.canSwitch(root.provider)
-            width: parent.width
-            implicitHeight: switchButton.implicitHeight
+          // Add account shows on the active account's tab; `a` works on every
+          // Claude tab. A 1 px inset keeps the side borders inside the clip.
+          Column {
+            id: accountActions
+            // Not switchButton.visible: a child of a hidden item always reads as hidden.
+            visible: root.canSwitch(root.provider) || root.showAddAccountButton(root.provider)
+            x: 1
+            width: parent.width - 2
+            spacing: Style.spacing.md
 
-            Button {
+            KeyButton {
               id: switchButton
-              anchors.fill: parent
-              anchors.leftMargin: 1
-              anchors.rightMargin: 1
-              implicitHeight: switchLabelRow.implicitHeight + verticalPadding * 2 + 2
+              visible: root.canSwitch(root.provider)
+              width: parent.width
+              label: root.switchLabel()
+              keys: root.switchRunning ? "" : (root.switchArmed ? "s" : "s s")
               selected: root.switchArmed
-              bordered: true
+              emphasized: root.switchArmed
               enabled: !root.switchRunning
-              opacity: enabled ? 1 : 0.6
-              foreground: root.switchArmed ? root.urgent : root.foreground
-              fontFamily: root.fontFamily
-              verticalPadding: Style.spacing.controlPaddingY
               onClicked: root.startSwitch()
+            }
 
-              Row {
-                id: switchLabelRow
-                anchors.centerIn: parent
-                spacing: Style.spacing.md
-
-                Text {
-                  textFormat: Text.PlainText
-                  anchors.verticalCenter: parent.verticalCenter
-                  text: root.switchLabel()
-                  color: root.switchArmed ? root.urgent : root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  font.bold: root.switchArmed
-                }
-
-                // The key to press, drawn like inline code.
-                Rectangle {
-                  visible: !root.switchRunning
-                  anchors.verticalCenter: parent.verticalCenter
-                  implicitWidth: switchKeyText.implicitWidth + Style.space(10)
-                  implicitHeight: switchKeyText.implicitHeight + Style.space(4)
-                  radius: Style.space(3)
-                  color: root.alpha(root.foreground, 0.10)
-                  border.width: 1
-                  border.color: root.alpha(root.foreground, 0.25)
-
-                  Text {
-                    id: switchKeyText
-                    anchors.centerIn: parent
-                    textFormat: Text.PlainText
-                    text: root.switchArmed ? "s" : "s s"
-                    color: root.foreground
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                  }
-                }
-              }
+            KeyButton {
+              id: addAccountButton
+              visible: root.showAddAccountButton(root.provider)
+              width: parent.width
+              label: "Add account"
+              keys: "a"
+              enabled: !root.switchRunning
+              onClicked: root.addAccount()
             }
           }
 
@@ -786,16 +871,16 @@ Panel {
 
           Column {
             id: usageSection
-            visible: !!root.provider && root.provider.recentDays && root.provider.recentDays.length > 0
+            visible: !!root.claudeProvider && root.claudeProvider.recentDays && root.claudeProvider.recentDays.length > 0
             width: parent.width
             spacing: Style.spacing.md
 
-            readonly property var days: root.provider ? (root.provider.recentDays || []) : []
-            readonly property real peak: Math.max(1, root.weekPeak(root.provider))
+            readonly property var days: root.claudeProvider ? (root.claudeProvider.recentDays || []) : []
+            readonly property real peak: Math.max(1, root.weekPeak(root.claudeProvider))
 
             PanelSectionHeader {
               width: parent.width
-              text: "TOKENS BY DAY"
+              text: root.allAccountsStats ? "TOKENS BY DAY · ALL ACCOUNTS" : "TOKENS BY DAY"
               foreground: root.foreground
               fontFamily: root.fontFamily
             }
@@ -831,7 +916,7 @@ Panel {
 
             PanelSectionHeader {
               width: parent.width
-              text: "TOKENS BY MODEL"
+              text: root.allAccountsStats ? "TOKENS BY MODEL · ALL ACCOUNTS" : "TOKENS BY MODEL"
               foreground: root.foreground
               fontFamily: root.fontFamily
             }
@@ -864,6 +949,68 @@ Panel {
           }
         }
       }
+    }
+  }
+
+  // A bordered button with its label and the key that does the same.
+  component KeyButton: Button {
+    id: keyButton
+    property string label: ""
+    property string keys: ""
+    property bool emphasized: false
+
+    implicitWidth: keyButtonRow.implicitWidth + horizontalPadding * 2 + 2
+    implicitHeight: keyButtonRow.implicitHeight + verticalPadding * 2 + 2
+    height: implicitHeight
+    bordered: true
+    opacity: enabled ? 1 : 0.6
+    foreground: emphasized ? root.urgent : root.foreground
+    fontFamily: root.fontFamily
+    verticalPadding: Style.spacing.controlPaddingY
+
+    Row {
+      id: keyButtonRow
+      anchors.centerIn: parent
+      spacing: Style.spacing.md
+
+      Text {
+        textFormat: Text.PlainText
+        anchors.verticalCenter: parent.verticalCenter
+        text: keyButton.label
+        color: keyButton.emphasized ? root.urgent : root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
+        font.bold: keyButton.emphasized
+      }
+
+      KeyCap {
+        visible: keyButton.keys !== ""
+        anchors.verticalCenter: parent.verticalCenter
+        keys: keyButton.keys
+      }
+    }
+  }
+
+  // A key or a command, drawn like inline code.
+  component KeyCap: Rectangle {
+    id: keyCap
+    property string keys: ""
+
+    implicitWidth: keyCapText.implicitWidth + Style.space(10)
+    implicitHeight: keyCapText.implicitHeight + Style.space(4)
+    radius: Style.space(3)
+    color: root.alpha(root.foreground, 0.10)
+    border.width: 1
+    border.color: root.alpha(root.foreground, 0.25)
+
+    Text {
+      id: keyCapText
+      anchors.centerIn: parent
+      textFormat: Text.PlainText
+      text: keyCap.keys
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
     }
   }
 

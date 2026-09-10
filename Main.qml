@@ -36,6 +36,31 @@ Item {
     onLoadFailed: root.cswapActive = null
   }
 
+  // Setup state from cswap-omarchy ("ok", "missing", "no-accounts" or "error")
+  // and the cswap binary it found. The file also changes when account tabs
+  // come or go, also after a run from bin/cswap-add-account, so a change rescans.
+  readonly property string cswapStatusPath: (Quickshell.env("XDG_STATE_HOME") || home + "/.local/state") + "/cswap-omarchy/status.json"
+  property var cswapStatus: ({})
+  readonly property string cswapState: String(cswapStatus.state || "")
+  readonly property string cswapPath: String(cswapStatus.cswapPath || "")
+
+  FileView {
+    path: root.cswapStatusPath
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: {
+      try {
+        var parsed = JSON.parse(String(text() || ""))
+        root.cswapStatus = parsed && typeof parsed === "object" ? parsed : ({})
+      } catch (e) {
+        root.cswapStatus = ({})
+      }
+      root.rescanAgents()
+    }
+    onLoadFailed: root.cswapStatus = ({})
+  }
+
   // Tab name, slot number and email of the claude-swap account behind a record.
   function cswapFields(record) {
     var id = String(record.id || "")
@@ -49,7 +74,7 @@ Item {
   }
 
   // bin/cswap-omarchy writes the claude-swap records and active.json. It runs
-  // at start, every 3 minutes, on each refresh, and after a switch.
+  // at start, on the claude-swap refresh interval, on each refresh, and after a switch.
   readonly property string cswapBridge: decodeURIComponent(String(Qt.resolvedUrl("bin/cswap-omarchy")).replace(/^file:\/\//, ""))
   property bool cswapBridgePending: false
 
@@ -77,8 +102,10 @@ Item {
     else cswapBridgeProcess.running = true
   }
 
+  property int cswapRefreshIntervalSec: Math.min(3600, Math.max(60, Number(setting("cswapRefreshIntervalSec", 180))))
+
   Timer {
-    interval: 180000
+    interval: root.cswapRefreshIntervalSec * 1000
     running: true
     repeat: true
     triggeredOnStart: true

@@ -20,6 +20,7 @@ from pathlib import Path
 PREFIX = "cswap-"
 STATE_HOME = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
 USAGE_DIR = STATE_HOME / "omarchy" / "agents" / "usage"
+STATUS_DIR = STATE_HOME / "cswap-omarchy"
 
 
 def log(message: str) -> None:
@@ -27,12 +28,22 @@ def log(message: str) -> None:
 
 
 def cswap_binary() -> str | None:
-  # systemd user services often run without ~/.local/bin on PATH.
+  # The shell can start without ~/.local/bin on PATH, so also look where uv puts tools.
   found = shutil.which("cswap")
   if found:
     return found
-  fallback = Path.home() / ".local/bin/cswap"
-  return str(fallback) if fallback.is_file() else None
+  home = Path.home()
+  data_home = Path(os.environ.get("XDG_DATA_HOME") or home / ".local/share")
+  candidates = [
+    Path(os.environ["UV_TOOL_BIN_DIR"]) / "cswap" if os.environ.get("UV_TOOL_BIN_DIR") else None,
+    Path(os.environ["XDG_BIN_HOME"]) / "cswap" if os.environ.get("XDG_BIN_HOME") else None,
+    home / ".local/bin/cswap",
+    Path(os.environ.get("UV_TOOL_DIR") or data_home / "uv/tools") / "claude-swap/bin/cswap",
+  ]
+  for candidate in candidates:
+    if candidate and candidate.is_file() and os.access(candidate, os.X_OK):
+      return str(candidate)
+  return None
 
 
 def parse_time(value) -> dt.datetime | None:
@@ -182,19 +193,48 @@ def write_if_changed(path: Path, record: dict) -> None:
   os.replace(tmp, path)
 
 
+def write_status(state: str, cswap: str | None = None, message: str = "", accounts: int = 0, records=()) -> None:
+  # The panel watches this file. It shows setup help from the state, and it
+  # rescans the usage folder when the file changes, also after a run from
+  # bin/cswap-add-account.
+  STATUS_DIR.mkdir(parents=True, exist_ok=True)
+  write_if_changed(STATUS_DIR / "status.json", {
+    "state": state,
+    "message": message,
+    "cswapPath": cswap or "",
+    "accounts": accounts,
+    "records": sorted(records),
+  })
+
+
+def remove_account_tabs(keep=()) -> None:
+  if USAGE_DIR.is_dir():
+    for path in USAGE_DIR.glob(PREFIX + "*.json"):
+      if path.name not in keep:
+        path.unlink(missing_ok=True)
+
+
 def main() -> int:
   cswap = cswap_binary()
   if not cswap:
-    log("cswap not found. Install it with: uv tool install claude-swap")
-    return 1
+    # Without claude-swap there are no account tabs. The panel shows how to install it.
+    remove_account_tabs()
+    (STATUS_DIR / "active.json").unlink(missing_ok=True)
+    write_status("missing")
+    return 0
   try:
     result = subprocess.run([cswap, "list", "--json"], capture_output=True, text=True, timeout=120, check=True)
     data = json.loads(result.stdout)
   except subprocess.CalledProcessError as exc:
-    log(f"cswap list failed: {exc.stderr.strip() or exc}")
-    return 1
+    message = f"cswap list failed: {exc.stderr.strip() or exc}"
   except (subprocess.TimeoutExpired, ValueError) as exc:
-    log(f"cswap list failed: {exc}")
+    message = f"cswap list failed: {exc}"
+  else:
+    message = "" if isinstance(data, dict) else "cswap list returned no account list"
+  if message:
+    # Keep the last tabs: a failed run is often temporary.
+    log(message)
+    write_status("error", cswap, message)
     return 1
 
   accounts = data.get("accounts") or []
@@ -207,7 +247,7 @@ def main() -> int:
   names = names_for(accounts)
 
   # The panel names the built-in Claude Code tab after the active account.
-  active_path = STATE_HOME / "cswap-omarchy" / "active.json"
+  active_path = STATUS_DIR / "active.json"
   active_index = next((i for i, a in enumerate(accounts) if is_active(a)), None)
   if active_index is not None:
     active = accounts[active_index]
@@ -225,9 +265,8 @@ def main() -> int:
     written.add(path.name)
 
   # Remove tabs for accounts that became active or left cswap.
-  for path in USAGE_DIR.glob(PREFIX + "*.json"):
-    if path.name not in written:
-      path.unlink(missing_ok=True)
+  remove_account_tabs(keep=written)
+  write_status("ok" if accounts else "no-accounts", cswap, accounts=len(accounts), records=written)
   return 0
 
 

@@ -1,38 +1,54 @@
-# Agents for claude-swap
+# Claude Swap Panel
 
-An Omarchy bar plugin for people with more than one Claude account in [claude-swap](https://github.com/realiti4/claude-swap). It replaces the stock Agents panel. It shows the usage limits of every account, and it switches Claude Code between the accounts from the keyboard.
+An Omarchy bar plugin for people with more than one Claude account in [claude-swap](https://github.com/realiti4/claude-swap). It replaces the Agents panel. It shows the usage limits of each account, and it switches Claude Code between the accounts from the keyboard.
 
-![The panel with two claude-swap accounts: the active work account and the personal account with its switch button](docs/panel.png)
+This plugin is not part of claude-swap. It only uses the `cswap` command.
+
+![The panel with two claude-swap accounts: the active work account with the Add account button, and the personal account with its switch button. Both tabs show the token charts for all accounts.](preview.png)
 
 The plugin is a copy of the Omarchy Agents panel (`omarchy.agents`) with these changes:
 
 - Each claude-swap account has its own tab. The tab name is the alias from `cswap alias`. If an account has no alias, the tab name is the part of the email address before the @. If two accounts have the same part before the @, the tabs show the full email addresses.
 - The Claude tabs stay in the claude-swap account order. Key `1` always shows account 1, also after a switch.
 - The active account shows `active` next to its plan.
-- An inactive account has a switch command. The switch needs a second key press or click, so a look at the usage never switches the account.
+- An inactive account has a switch button. From the keyboard, a switch needs two key presses, so a look at the usage never switches the account.
+- The Add account button opens a terminal that adds an account to claude-swap.
+- If claude-swap is not installed, the Claude tab shows the install command.
+- The bar icon warns about the limits of the active Claude account, also when the panel was last open on the tab of another account.
+- The token charts show on each Claude tab, with the label `ALL ACCOUNTS`. Claude Code does not record the account in its session files, so the charts show the tokens of all accounts together.
 
 Codex, Fireworks, and the other stock tabs stay the same.
 
 ## Requirements
 
-- Omarchy 4 with the Agents panel.
-- claude-swap with two or more accounts:
+- Omarchy 4.
+- Claude Code.
+- claude-swap. The plugin does not install it. To install it, run:
 
   ```
   uv tool install claude-swap
-  cswap add
   ```
 
-  Log in to Claude Code with each account, and run `cswap add` for each account.
 - `python3`.
 
 ## Install
 
 ```
-omarchy plugin add https://github.com/jasasonc/omarchy-cswap-agents.git --enable
+omarchy plugin add https://github.com/jasasonc/omarchy-claude-swap-panel.git --enable
 ```
 
-The plugin takes the place of `omarchy.agents` in the bar. Do not enable both plugins at the same time. They use the same panel commands and the same usage folder.
+The plugin takes the place of the Agents panel (`omarchy.agents`) in the bar. Do not enable a second copy of the Agents panel at the same time. The copies use the same panel commands and the same usage folder.
+
+## Add accounts
+
+Open the panel on the tab of the active account. Click Add account, or push `a`. A terminal opens and does these steps:
+
+1. claude-swap saves the account that Claude Code uses now.
+2. You log in with the account to add. The login opens in the browser.
+3. claude-swap saves the new account.
+4. You can switch Claude Code back to the first account.
+
+If the browser is signed in to claude.ai with a different account, the login uses that account. Sign out of claude.ai first.
 
 To give the tabs short names, set aliases:
 
@@ -53,34 +69,41 @@ o.bind("SUPER + CTRL + U", "Claude usage", "omarchy-shell omarchy.agents toggle"
 
 | Key | Action |
 |---|---|
-| `h`, `l`, or `1` to `9` | Show another account |
-| `s`, then `s` again | Switch Claude Code to the shown account |
+| `h`, `l`, or `1` to `9` | Show another tab |
+| `s`, then `s` again | Switch Claude Code to the account on the tab |
+| `a` | Add an account |
+| `c` | Copy the install command, if claude-swap is not installed |
 | `j`, `k` | Scroll |
 | `r` or `Enter` | Refresh the numbers |
 | `Esc` | Close the panel |
 
-After the first `s`, the switch command waits 3 seconds for the second `s`. If you change the tab or close the panel, the switch command stops. With a mouse, click the switch button below the limits one time.
+After the first `s`, the switch waits 3 seconds for the second `s`. If you change the tab or close the panel, the switch stops. With a mouse, click the switch button one time.
 
 After a switch, a notification shows the result. Open Claude Code sessions use the new account from their next message.
+
+## Settings
+
+The plugin reads the usage of all accounts every 180 seconds. To change the interval, add `"cswapRefreshIntervalSec": 300` to the entry of the plugin in `~/.config/omarchy/shell.json`. The minimum is 60 seconds. The other settings are the same as in the Agents panel.
 
 ## How it works
 
 - `bin/cswap-omarchy` runs `cswap list --json`. It writes one usage record for each inactive account to `~/.local/state/omarchy/agents/usage/cswap-<name>.json`. The panel shows each record as a tab.
 - The stock Claude collector writes the record of the active account. The plugin gives that tab the name of the active account, from `~/.local/state/cswap-omarchy/active.json`.
-- The plugin runs `bin/cswap-omarchy` when the shell starts, every 3 minutes, when the panel opens, and after a switch. claude-swap keeps its own usage cache, so the plugin sends no more usage requests than claude-swap does.
+- `bin/cswap-omarchy` also writes `~/.local/state/cswap-omarchy/status.json`. The panel reads the setup state from this file.
+- The plugin runs `bin/cswap-omarchy` when the shell starts, at the refresh interval, when the panel opens, and after a switch. claude-swap keeps its own usage cache, so the plugin sends no more usage requests than claude-swap does.
 - If claude-swap cannot read the usage of an account, the tab shows the cause, for example `Sign-in expired`, and the last known numbers.
 
 ## Update and remove
 
 ```
-omarchy plugin update cswap.agents
+omarchy plugin update io.github.jasasonc.claude-swap-panel
 ```
 
-To go back to the stock panel:
+To go back to the stock Agents panel:
 
 ```
 omarchy plugin enable omarchy.agents
-omarchy plugin remove cswap.agents
+omarchy plugin remove io.github.jasasonc.claude-swap-panel
 rm -f ~/.local/state/omarchy/agents/usage/cswap-*.json
 rm -rf ~/.local/state/cswap-omarchy
 ```
