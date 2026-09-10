@@ -2,6 +2,8 @@
 
 An Omarchy bar plugin for people with more than one Claude account in [claude-swap](https://github.com/realiti4/claude-swap). It replaces the stock Agents panel. It shows the usage limits of every account, and it switches Claude Code between the accounts from the keyboard.
 
+![The panel with two claude-swap accounts: the active work account and the personal account with its switch button](docs/panel.png)
+
 The plugin is a copy of the Omarchy Agents panel (`omarchy.agents`) with these changes:
 
 - Each claude-swap account has its own tab. The tab name is the alias from `cswap alias`. If an account has no alias, the tab name is the part of the email address before the @. If two accounts have the same part before the @, the tabs show the full email addresses.
