@@ -558,7 +558,9 @@ Panel {
           Row {
             id: providerSwitch
             visible: root.providers.length > 1
-            width: parent.width
+            // A 1 px inset keeps the outer tab borders inside the clip.
+            x: 1
+            width: parent.width - 2
             spacing: Style.spacing.md
 
             readonly property real cellWidth: root.providers.length > 0
