@@ -57,7 +57,7 @@ o.bind("SUPER + CTRL + U", "Claude usage", "omarchy-shell omarchy.agents toggle"
 | `r` or `Enter` | Refresh the numbers |
 | `Esc` | Close the panel |
 
-After the first `s`, the switch command waits 3 seconds for the second `s`. If you change the tab or close the panel, the switch command stops. There is no mouse action for the switch.
+After the first `s`, the switch command waits 3 seconds for the second `s`. If you change the tab or close the panel, the switch command stops. With a mouse, click the switch button below the limits one time.
 
 After a switch, a notification shows the result. Open Claude Code sessions use the new account from their next message.
 

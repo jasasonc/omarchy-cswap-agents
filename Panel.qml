@@ -66,8 +66,9 @@ Panel {
 
   // ------------------------------------------------------- claude-swap switch
   //
-  // Switching needs two presses of `s` within 3 seconds, so reading another
-  // account never switches by accident. There is no mouse path.
+  // From the keyboard, switching needs two presses of `s` within 3 seconds,
+  // so reading another account never switches by accident. A click on the
+  // switch button, which sits apart from the tabs, switches at once.
 
   property bool switchArmed: false
   property bool switchRunning: false
@@ -80,16 +81,22 @@ Panel {
     var name = root.provider ? String(root.provider.providerName || "") : ""
     if (root.switchRunning) return "Switching…"
     if (root.switchArmed) return "Press s again to switch to " + name
-    return "Press s s to switch Claude Code to " + name
+    return "Switch Claude Code to " + name + "   (s s)"
   }
 
+  // The `s` key: the first press arms, the second press switches.
   function pressSwitch() {
-    var p = root.provider
-    if (!canSwitch(p) || root.switchRunning) return
+    if (!canSwitch(root.provider) || root.switchRunning) return
     if (!root.switchArmed) {
       root.switchArmed = true
       return
     }
+    startSwitch()
+  }
+
+  function startSwitch() {
+    var p = root.provider
+    if (!canSwitch(p) || root.switchRunning) return
     root.switchArmed = false
     root.switchRunning = true
     switchProcess.command = ["bash", "-c", root.switchScript, "cswap-switch",
@@ -706,19 +713,21 @@ Panel {
             foreground: root.foreground
           }
 
-          // A key hint, not a button: only `s` then `s` switches.
-          Text {
+          // One click switches; from the keyboard it takes `s` then `s`.
+          Button {
             id: switchSection
             visible: root.canSwitch(root.provider)
-            textFormat: Text.PlainText
             width: parent.width
             text: root.switchLabel()
-            color: root.switchArmed ? root.urgent : root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-            font.bold: root.switchArmed
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.WordWrap
+            selected: root.switchArmed
+            bordered: true
+            enabled: !root.switchRunning
+            opacity: enabled ? 1 : 0.6
+            foreground: root.switchArmed ? root.urgent : root.foreground
+            fontFamily: root.fontFamily
+            fontSize: Style.font.bodySmall
+            verticalPadding: Style.spacing.controlPaddingY
+            onClicked: root.startSwitch()
           }
 
           // ---------- Usage ----------
