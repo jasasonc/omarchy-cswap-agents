@@ -80,8 +80,8 @@ Panel {
   function switchLabel() {
     var name = root.provider ? String(root.provider.providerName || "") : ""
     if (root.switchRunning) return "Switching…"
-    if (root.switchArmed) return "Press s again to switch to " + name
-    return "Switch Claude Code to " + name + "   (s s)"
+    if (root.switchArmed) return "Press again to switch to " + name
+    return "Switch Claude Code to " + name
   }
 
   // The `s` key: the first press arms, the second press switches.
@@ -714,20 +714,66 @@ Panel {
           }
 
           // One click switches; from the keyboard it takes `s` then `s`.
-          Button {
+          // A 1 px inset keeps the button's side borders inside the clip.
+          Item {
             id: switchSection
             visible: root.canSwitch(root.provider)
             width: parent.width
-            text: root.switchLabel()
-            selected: root.switchArmed
-            bordered: true
-            enabled: !root.switchRunning
-            opacity: enabled ? 1 : 0.6
-            foreground: root.switchArmed ? root.urgent : root.foreground
-            fontFamily: root.fontFamily
-            fontSize: Style.font.bodySmall
-            verticalPadding: Style.spacing.controlPaddingY
-            onClicked: root.startSwitch()
+            implicitHeight: switchButton.implicitHeight
+
+            Button {
+              id: switchButton
+              anchors.fill: parent
+              anchors.leftMargin: 1
+              anchors.rightMargin: 1
+              implicitHeight: switchLabelRow.implicitHeight + verticalPadding * 2 + 2
+              selected: root.switchArmed
+              bordered: true
+              enabled: !root.switchRunning
+              opacity: enabled ? 1 : 0.6
+              foreground: root.switchArmed ? root.urgent : root.foreground
+              fontFamily: root.fontFamily
+              verticalPadding: Style.spacing.controlPaddingY
+              onClicked: root.startSwitch()
+
+              Row {
+                id: switchLabelRow
+                anchors.centerIn: parent
+                spacing: Style.spacing.md
+
+                Text {
+                  textFormat: Text.PlainText
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: root.switchLabel()
+                  color: root.switchArmed ? root.urgent : root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  font.bold: root.switchArmed
+                }
+
+                // The key to press, drawn like inline code.
+                Rectangle {
+                  visible: !root.switchRunning
+                  anchors.verticalCenter: parent.verticalCenter
+                  implicitWidth: switchKeyText.implicitWidth + Style.space(10)
+                  implicitHeight: switchKeyText.implicitHeight + Style.space(4)
+                  radius: Style.space(3)
+                  color: root.alpha(root.foreground, 0.10)
+                  border.width: 1
+                  border.color: root.alpha(root.foreground, 0.25)
+
+                  Text {
+                    id: switchKeyText
+                    anchors.centerIn: parent
+                    textFormat: Text.PlainText
+                    text: root.switchArmed ? "s" : "s s"
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+              }
+            }
           }
 
           // ---------- Usage ----------
