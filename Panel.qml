@@ -100,7 +100,8 @@ Panel {
 
   // $1 = cswap account number, $2 = account name for the notification.
   readonly property string switchScript: [
-    'out=$("$HOME/.local/bin/cswap" switch "$1" 2>&1)',
+    'cswap=$(command -v cswap || echo "$HOME/.local/bin/cswap")',
+    'out=$("$cswap" switch "$1" 2>&1)',
     'status=$?',
     'if [ $status -eq 0 ]; then',
     '  notify-send -a "Claude accounts" "Claude Code now uses $2" "Open sessions change on their next message."',

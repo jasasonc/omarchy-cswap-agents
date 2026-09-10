@@ -29,7 +29,7 @@ Codex, Fireworks, and the other stock tabs stay the same.
 omarchy plugin add https://github.com/jasasonc/omarchy-cswap-agents.git --enable
 ```
 
-The plugin takes the place of `omarchy.agents` in the bar.
+The plugin takes the place of `omarchy.agents` in the bar. Do not enable both plugins at the same time. They use the same panel commands and the same usage folder.
 
 To give the tabs short names, set aliases:
 
