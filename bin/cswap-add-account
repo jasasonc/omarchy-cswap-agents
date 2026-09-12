@@ -3,6 +3,12 @@
 # $1 = cswap binary (optional), $2 = bin/cswap-omarchy, to update the panel at the end.
 set -uo pipefail
 
+# Put the standard system directories first on PATH, so a program in a
+# user-writable directory cannot stand in for a system tool such as pgrep or
+# python3. The rest of the inherited PATH still follows, so cswap and claude
+# are still found.
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+
 cswap=${1:-}
 [ -x "$cswap" ] || cswap=$(command -v cswap || true)
 bridge=${2:-}

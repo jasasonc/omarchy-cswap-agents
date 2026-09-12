@@ -142,6 +142,7 @@ Panel {
   Process {
     id: switchProcess
     running: false
+    environment: ({ "PATH": usage.hardenedPath })
     onExited: function(exitCode, exitStatus) {
       root.switchRunning = false
       usage.runCswapBridge()

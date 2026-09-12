@@ -15,6 +15,13 @@ Item {
   readonly property string home: Quickshell.env("HOME") || ""
   readonly property string usageDir: (Quickshell.env("XDG_STATE_HOME") || home + "/.local/state") + "/omarchy/agents/usage"
 
+  // PATH with the standard system directories first, then the inherited PATH.
+  // The processes this plugin starts use it so a program placed in a
+  // user-writable directory earlier on PATH cannot stand in for a system
+  // tool such as sed or notify-send. The inherited PATH still follows, so
+  // cswap in ~/.local/bin and the Omarchy tools are still found.
+  readonly property string hardenedPath: "/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (Quickshell.env("PATH") || "")
+
   // claude-swap: the account Claude Code uses now, written by cswap-omarchy.
   // The built-in Claude Code tab is named after it.
   readonly property string cswapActivePath: (Quickshell.env("XDG_STATE_HOME") || home + "/.local/state") + "/cswap-omarchy/active.json"
@@ -82,6 +89,7 @@ Item {
     id: cswapBridgeProcess
     running: false
     command: ["python3", root.cswapBridge]
+    environment: ({ "PATH": root.hardenedPath })
     onExited: {
       // A new account file only shows up after a rescan of the usage folder.
       root.rescanAgents()
