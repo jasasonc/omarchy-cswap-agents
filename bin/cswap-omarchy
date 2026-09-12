@@ -16,7 +16,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -30,6 +29,9 @@ STATUS_DIR = STATE_HOME / "cswap-omarchy"
 LIST_TIMEOUT = 120  # seconds
 MAX_LIST_BYTES = 8 * 1024 * 1024
 MAX_LIST_STDERR = 256 * 1024
+
+# One of our own account/status records; a few KB in practice.
+MAX_RECORD_BYTES = 1024 * 1024
 
 
 def log(message: str) -> None:
@@ -185,21 +187,64 @@ def record_for(account: dict, slug: str) -> dict:
   }
 
 
+def read_json_nofollow(dir_fd: int, name: str):
+  """Read and parse a file inside dir_fd without following a final symlink.
+
+  Returns the parsed value, or None if the file is missing, is a symlink,
+  is larger than MAX_RECORD_BYTES, or does not parse.
+  """
+  try:
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+  except OSError:
+    return None
+  try:
+    data = os.read(fd, MAX_RECORD_BYTES + 1)
+  finally:
+    os.close(fd)
+  if len(data) > MAX_RECORD_BYTES:
+    return None
+  try:
+    return json.loads(data)
+  except ValueError:
+    return None
+
+
 def write_if_changed(path: Path, record: dict) -> None:
   def same(a: dict, b: dict) -> bool:
     return {k: v for k, v in a.items() if k != "updatedAt"} == {k: v for k, v in b.items() if k != "updatedAt"}
 
+  # Open the containing directory itself without following a symlink, then do
+  # every step through that descriptor. A directory or file of the same name
+  # that has been swapped for a symlink cannot redirect the read or the write.
   try:
-    if same(json.loads(path.read_text(encoding="utf-8")), record):
+    dir_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+  except OSError as exc:
+    log(f"skipping write of {path.name}: {exc}")
+    return
+  try:
+    existing = read_json_nofollow(dir_fd, path.name)
+    if isinstance(existing, dict) and same(existing, record):
       return
-  except (OSError, ValueError):
-    pass
-  # The temp name does not end in .json, so the panel never reads a half-written file.
-  fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.stem}.")
-  with os.fdopen(fd, "w", encoding="utf-8") as handle:
-    json.dump(record, handle, separators=(",", ":"), sort_keys=True)
-    handle.write("\n")
-  os.replace(tmp, path)
+    # The temp name does not end in .json, so the panel never reads a
+    # half-written file. O_EXCL and O_NOFOLLOW mean we create a fresh file,
+    # never open a planted one.
+    tmp = f".{path.stem}.{os.getpid()}.{int.from_bytes(os.urandom(4), 'big'):08x}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
+    try:
+      with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(record, handle, separators=(",", ":"), sort_keys=True)
+        handle.write("\n")
+      os.replace(tmp, path.name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+    except BaseException:
+      try:
+        os.unlink(tmp, dir_fd=dir_fd)
+      except OSError:
+        pass
+      raise
+  except OSError as exc:
+    log(f"could not write {path.name}: {exc}")
+  finally:
+    os.close(dir_fd)
 
 
 def write_status(state: str, cswap: str | None = None, message: str = "", accounts: int = 0, records=()) -> None:
@@ -217,10 +262,25 @@ def write_status(state: str, cswap: str | None = None, message: str = "", accoun
 
 
 def remove_account_tabs(keep=()) -> None:
-  if USAGE_DIR.is_dir():
-    for path in USAGE_DIR.glob(PREFIX + "*.json"):
-      if path.name not in keep:
-        path.unlink(missing_ok=True)
+  # Open the usage directory without following a symlink and remove the
+  # account files through that descriptor, so the removals stay inside the
+  # real directory. Removing a name that is a symlink removes the link, not
+  # its target.
+  try:
+    dir_fd = os.open(USAGE_DIR, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+  except OSError:
+    return
+  try:
+    with os.scandir(dir_fd) as entries:
+      names = [entry.name for entry in entries]
+    for name in names:
+      if name.startswith(PREFIX) and name.endswith(".json") and name not in keep:
+        try:
+          os.unlink(name, dir_fd=dir_fd)
+        except OSError:
+          pass
+  finally:
+    os.close(dir_fd)
 
 
 def _kill_group(proc: subprocess.Popen) -> None:
