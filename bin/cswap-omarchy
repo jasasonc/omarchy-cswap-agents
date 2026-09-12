@@ -11,16 +11,25 @@ import datetime as dt
 import json
 import os
 import re
+import select
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 PREFIX = "cswap-"
 STATE_HOME = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
 USAGE_DIR = STATE_HOME / "omarchy" / "agents" / "usage"
 STATUS_DIR = STATE_HOME / "cswap-omarchy"
+
+# Limits for the `cswap list --json` call. A real account list is small, so
+# these only stop a hung or runaway cswap, not a normal run.
+LIST_TIMEOUT = 120  # seconds
+MAX_LIST_BYTES = 8 * 1024 * 1024
+MAX_LIST_STDERR = 256 * 1024
 
 
 def log(message: str) -> None:
@@ -214,6 +223,61 @@ def remove_account_tabs(keep=()) -> None:
         path.unlink(missing_ok=True)
 
 
+def _kill_group(proc: subprocess.Popen) -> None:
+  try:
+    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+  except (ProcessLookupError, PermissionError):
+    proc.kill()
+
+
+def run_cswap_list(cswap: str) -> str:
+  """Run `cswap list --json` with a deadline and an output-size limit.
+
+  cswap runs in its own process group, so a hang or a runaway child can be
+  stopped as a group. stdout is limited to MAX_LIST_BYTES and the whole run
+  to LIST_TIMEOUT seconds; hitting either limit kills the group and raises.
+  Both pipes are drained so a large stderr cannot block the read.
+  """
+  argv = [cswap, "list", "--json"]
+  proc = subprocess.Popen(
+    argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True
+  )
+  out = bytearray()
+  err = bytearray()
+  streams = {
+    proc.stdout.fileno(): (out, MAX_LIST_BYTES),
+    proc.stderr.fileno(): (err, MAX_LIST_STDERR),
+  }
+  deadline = time.monotonic() + LIST_TIMEOUT
+  try:
+    while streams:
+      remaining = deadline - time.monotonic()
+      if remaining <= 0:
+        _kill_group(proc)
+        raise subprocess.TimeoutExpired(argv, LIST_TIMEOUT)
+      ready, _, _ = select.select(list(streams), [], [], remaining)
+      for fd in ready:
+        buf, cap = streams[fd]
+        chunk = os.read(fd, 65536)
+        if not chunk:
+          del streams[fd]
+          continue
+        buf.extend(chunk)
+        if len(buf) > cap:
+          _kill_group(proc)
+          raise ValueError(f"cswap list output exceeded {cap} bytes")
+  finally:
+    proc.wait()
+    proc.stdout.close()
+    proc.stderr.close()
+  if proc.returncode != 0:
+    raise subprocess.CalledProcessError(
+      proc.returncode, argv, output=bytes(out),
+      stderr=bytes(err).decode("utf-8", "replace"),
+    )
+  return out.decode("utf-8", "replace")
+
+
 def main() -> int:
   cswap = cswap_binary()
   if not cswap:
@@ -223,11 +287,10 @@ def main() -> int:
     write_status("missing")
     return 0
   try:
-    result = subprocess.run([cswap, "list", "--json"], capture_output=True, text=True, timeout=120, check=True)
-    data = json.loads(result.stdout)
+    data = json.loads(run_cswap_list(cswap))
   except subprocess.CalledProcessError as exc:
-    message = f"cswap list failed: {exc.stderr.strip() or exc}"
-  except (subprocess.TimeoutExpired, ValueError) as exc:
+    message = f"cswap list failed: {(exc.stderr or '').strip() or exc}"
+  except (subprocess.TimeoutExpired, ValueError, RecursionError) as exc:
     message = f"cswap list failed: {exc}"
   else:
     message = "" if isinstance(data, dict) else "cswap list returned no account list"

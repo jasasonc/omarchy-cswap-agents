@@ -91,11 +91,13 @@ Item {
     command: ["python3", root.cswapBridge]
     environment: ({ "PATH": root.hardenedPath })
     onExited: {
+      cswapBridgeDeadline.stop()
       // A new account file only shows up after a rescan of the usage folder.
       root.rescanAgents()
       if (root.cswapBridgePending) {
         root.cswapBridgePending = false
         running = true
+        cswapBridgeDeadline.restart()
       }
     }
 
@@ -105,9 +107,24 @@ Item {
     }
   }
 
+  // A stuck cswap-omarchy run should not sit forever. Its own cswap call has
+  // a 120 s limit, so this only fires if the process hangs somewhere else.
+  Timer {
+    id: cswapBridgeDeadline
+    interval: 150000
+    repeat: false
+    onTriggered: {
+      console.warn("agents", "cswap-omarchy timed out; stopping it")
+      cswapBridgeProcess.running = false
+    }
+  }
+
   function runCswapBridge() {
     if (cswapBridgeProcess.running) root.cswapBridgePending = true
-    else cswapBridgeProcess.running = true
+    else {
+      cswapBridgeProcess.running = true
+      cswapBridgeDeadline.restart()
+    }
   }
 
   property int cswapRefreshIntervalSec: Math.min(3600, Math.max(60, Number(setting("cswapRefreshIntervalSec", 180))))
@@ -539,7 +556,10 @@ Item {
       finishSyncRun()
       return
     }
-    var script = "dir=$0; [[ -d \"$dir\" ]] || exit 0; shopt -s nullglob; for f in \"$dir\"/*.json; do [[ -f \"$f\" ]] || continue; printf '===%s===\\n' \"$f\"; cat \"$f\"; printf '\\n=== EOM ===\\n'; done"
+    // Read at most 5 MB per snapshot with head, not cat: the files come from
+    // other machines through the sync folder, and a normal snapshot is far
+    // smaller than this, so the limit only stops an oversized or endless file.
+    var script = "dir=$0; [[ -d \"$dir\" ]] || exit 0; shopt -s nullglob; for f in \"$dir\"/*.json; do [[ -f \"$f\" ]] || continue; printf '===%s===\\n' \"$f\"; head -c 5242880 \"$f\"; printf '\\n=== EOM ===\\n'; done"
     syncScanProcess.command = ["bash", "-c", script, root.syncEffectiveDir]
     syncScanProcess.running = true
   }
@@ -579,13 +599,27 @@ Item {
   }
 
   function parseSyncScanOutput(output) {
+    // A synced fleet is a handful of devices. Stop after this many snapshots
+    // so a sync folder stuffed with extra files cannot make the merge below
+    // run without end. Each file is already limited to 5 MB by the scan.
+    var MAX_SNAPSHOTS = 128
     var lines = String(output || "").split("\n")
     var snapshots = []
     var currentPath = ""
     var currentJson = []
+    var capReported = false
 
     function flush() {
       if (currentPath === "") return
+      if (snapshots.length >= MAX_SNAPSHOTS) {
+        if (!capReported) {
+          console.warn("agents/sync", "Too many snapshots; reading the first", MAX_SNAPSHOTS)
+          capReported = true
+        }
+        currentPath = ""
+        currentJson = []
+        return
+      }
       var raw = currentJson.join("\n").trim()
       try {
         var parsed = JSON.parse(raw)

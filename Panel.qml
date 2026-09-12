@@ -115,6 +115,7 @@ Panel {
     switchProcess.command = ["bash", "-c", root.switchScript, "cswap-switch",
                              String(Number(p.cswapNumber)), String(p.providerName || ""), usage.cswapPath]
     switchProcess.running = true
+    switchDeadline.restart()
   }
 
   // $1 = cswap account number, $2 = account name for the notification,
@@ -144,6 +145,7 @@ Panel {
     running: false
     environment: ({ "PATH": usage.hardenedPath })
     onExited: function(exitCode, exitStatus) {
+      switchDeadline.stop()
       root.switchRunning = false
       usage.runCswapBridge()
       // The account you switched to is now the active Claude Code tab.
@@ -153,6 +155,19 @@ Panel {
     stderr: StdioCollector {
       waitForEnd: true
       onStreamFinished: if (text.trim() !== "") console.warn("agents", "cswap switch:", text.trim())
+    }
+  }
+
+  // A switch runs cswap and can wait on a login, so give it a generous limit
+  // and stop it if it hangs, rather than leaving the button stuck on
+  // "Switching…" forever.
+  Timer {
+    id: switchDeadline
+    interval: 180000
+    repeat: false
+    onTriggered: {
+      console.warn("agents", "cswap switch timed out; stopping it")
+      switchProcess.running = false
     }
   }
 
